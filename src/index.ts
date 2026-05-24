@@ -34,12 +34,23 @@ async function main(): Promise<void> {
   });
 
   // Verify connectivity to n8n instance
-  try {
-    await n8nClient.healthCheck();
-    logger.info('Successfully connected to n8n instance');
-  } catch (error) {
-    logger.warn('Could not connect to n8n instance at startup', { error });
-    // Non-fatal: server will still start and retry on requests
+  // Retry up to 3 times with a short delay before giving up at startup
+  let connected = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await n8nClient.healthCheck();
+      logger.info('Successfully connected to n8n instance');
+      connected = true;
+      break;
+    } catch (error) {
+      logger.warn(`Could not connect to n8n instance (attempt ${attempt}/3)`, { error });
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+  }
+  if (!connected) {
+    logger.warn('Proceeding without n8n connection; requests will be retried on demand');
   }
 
   // Create MCP server instance
@@ -90,19 +101,4 @@ async function main(): Promise<void> {
 
   // Start the stdio transport
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  logger.info('n8n-mcp server running on stdio');
-
-  // Graceful shutdown
-  process.on('SIGINT', async () => {
-    logger.info('Shutting down n8n-mcp server...');
-    await server.close();
-    process.exit(0);
-  });
-}
-
-main().catch((error) => {
-  logger.error('Fatal error during startup', { error });
-  process.exit(1);
-});
+  await server.connect(
